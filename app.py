@@ -6,6 +6,8 @@ import json
 import os
 import subprocess
 import time
+import pygame
+import tempfile
 
 # ================================
 # 🔧 Start Ollama Server (if not running)
@@ -30,23 +32,15 @@ def start_ollama():
 start_ollama()
 
 # ================================
-# 🎨 Page Config & Warm Theme
-# ================================
-st.set_page_config(page_title="🌸 Ava", layout="centered")
-
-
-# ================================
 # 🌸 Title & Welcome Message
 # ================================
 st.title("🌸 Ava - Your Compassionate Companion")
 
 st.markdown("""
-<div class="welcome">
-Hi there, I'm Ava 💖<br>
-I'm here to listen — without judgment, without rush.<br>
+Hi there, I'm Ava 💖  
+I'm here to listen — without judgment, without rush.  
 Whatever you're feeling, it's okay. You're safe here.
-</div>
-""", unsafe_allow_html=True)
+""")
 
 # ================================
 # 🧠 Initialize Session State
@@ -56,7 +50,7 @@ if "chat" not in st.session_state:
 if "mood_logs" not in st.session_state:
     st.session_state.mood_logs = []
 if "mood_history" not in st.session_state:
-    st.session_state.mood_history = []  # Full emotional timeline
+    st.session_state.mood_history = []
 
 # ================================
 # 🔍 Mood Detection Function
@@ -88,7 +82,6 @@ if os.path.exists(LOG_FILE):
         with open(LOG_FILE, "r") as f:
             saved_logs = json.load(f)
             st.session_state.mood_logs = saved_logs
-            # Rebuild mood_history from logs
             for log in saved_logs:
                 st.session_state.mood_history.append({
                     "timestamp": log["timestamp"],
@@ -101,7 +94,7 @@ if os.path.exists(LOG_FILE):
 # ================================
 # 🌿 Sidebar: Mood Tracker
 # ================================
-st.sidebar.markdown("### 🌿 How are you today?")
+st.sidebar.header("🌿 How are you today?")
 st.sidebar.markdown("Pick a mood — no feeling is too small.")
 mood_options = ["😊 Happy", "😢 Sad", "😟 Anxious", "😠 Angry", "😐 Neutral", "😴 Tired", "🧘‍♀️ Calm"]
 selected_mood = st.sidebar.selectbox("", mood_options, label_visibility="collapsed")
@@ -116,12 +109,9 @@ if st.sidebar.button("Log Mood"):
         "timestamp": entry["timestamp"],
         "mood": selected_mood.split(" ")[1]
     })
-    
-    # Save to file
     os.makedirs("data", exist_ok=True)
     with open(LOG_FILE, "w") as f:
         json.dump(st.session_state.mood_logs, f, indent=2)
-    
     st.sidebar.success(f"Mood logged: {selected_mood}")
 
 # Show mood history
@@ -130,10 +120,63 @@ if st.session_state.mood_logs:
     df = pd.DataFrame(st.session_state.mood_logs)
     st.sidebar.dataframe(df.tail(7), use_container_width=True)
 
-# Little love note in sidebar
 st.sidebar.markdown("---")
 st.sidebar.markdown("💬 You're not alone.")
 st.sidebar.markdown("🌼 Breathe. Share. Be held.")
+
+# ================================
+# 🔊 ElevenLabs Text-to-Speech
+# ================================
+def speak_with_elevenlabs(text, api_key):
+    try:
+        VOICE_ID = "2SKmF2TPfyD91YFCvZaX"  # Your voice ID
+        url = f"https://api.elevenlabs.io/v1/text-to-speech/{VOICE_ID}"
+        headers = {"xi-api-key": api_key}
+        data = {
+            "text": text,
+            "model_id": "eleven_multilingual_v2",
+            "voice_settings": {
+                "stability": 0.75,
+                "similarity_boost": 0.85,
+                "style": 0.2,
+                "use_speaker_boost": True
+            }
+        }
+
+        response = requests.post(url, json=data, headers=headers)
+        if response.status_code != 200:
+            st.error(f"❌ ElevenLabs error: {response.status_code} - {response.text}")
+            return
+
+        with tempfile.NamedTemporaryFile(delete=False, suffix='.mp3') as f:
+            temp_path = f.name
+        with open(temp_path, 'wb') as f:
+            f.write(response.content)
+
+        pygame.mixer.init()
+        pygame.mixer.music.load(temp_path)
+        pygame.mixer.music.play()
+
+        while pygame.mixer.music.get_busy():
+            pygame.time.Clock().tick(10)
+
+        pygame.mixer.quit()
+        os.unlink(temp_path)
+
+    except Exception as e:
+        st.error(f"🔊 Audio error: {str(e)}")
+
+# ================================
+# 🔐 Load ElevenLabs API Key
+# ================================
+try:
+    ELEVENLABS_API_KEY = st.secrets["elevenlabs_api_key"]
+except:
+    st.warning("🔊 Voice disabled: Add your ElevenLabs API key to `.streamlit/secrets.toml`")
+    ELEVENLABS_API_KEY = None
+
+# Voice toggle
+enable_voice = st.sidebar.checkbox("🔊 Ava speaks back", value=True, key="enable_voice")
 
 # ================================
 # 💬 Chat History
@@ -154,19 +197,16 @@ if user_input:
     with st.chat_message("user"):
         st.write(user_input)
 
-    # Detect mood from input
+    # Detect mood
     current_mood = detect_mood(user_input)
-    
-    # Add to mood history
     st.session_state.mood_history.append({
         "timestamp": datetime.now().strftime("%Y-%m-%d %H:%M"),
         "mood": current_mood
     })
 
-    # Build emotional context for Ava
+    # Build emotional context
     recent_moods = [m["mood"] for m in st.session_state.mood_history[-5:]]
     mood_context = ""
-
     if recent_moods.count("sad") >= 2:
         mood_context = "I've noticed sadness has been with you lately. It means a lot that you keep sharing your heart."
     elif recent_moods.count("anxious") >= 2:
@@ -178,25 +218,19 @@ if user_input:
     elif current_mood == "neutral":
         mood_context = "You're holding space for something — I'm here, quietly with you."
 
-    # Generate bot response
+    # Generate response
     try:
-        # Use ONLY the user input + context (no system prompt — handled by Modelfile)
-        full_prompt = f"[INST] {mood_context}\n\nUser: {user_input} [/INST]"
-
+        full_prompt = f"[INST] {mood_context}\nUser: {user_input} [/INST]"
         with st.spinner("💭 Ava is listening..."):
             time.sleep(0.5)
 
         response = requests.post(
             "http://localhost:11434/api/generate",
             json={
-                "model": "ava",  # ← Make sure you built this with `ollama create ava -f Modelfile`
+                "model": "ava",
                 "prompt": full_prompt,
                 "stream": False,
-                "options": {
-                    "temperature": 0.75,
-                    "top_p": 0.9,
-                    "num_ctx": 8192
-                }
+                "options": {"temperature": 0.75, "top_p": 0.9, "num_ctx": 8192}
             },
             timeout=60
         )
@@ -219,12 +253,16 @@ if user_input:
     with st.chat_message("assistant"):
         st.write(bot_msg)
 
+        # Speak if enabled
+        if enable_voice and ELEVENLABS_API_KEY:
+            with st.spinner("🔊 Ava is speaking..."):
+                speak_with_elevenlabs(bot_msg, ELEVENLABS_API_KEY)
+
 # ================================
 # 🌼 Footer
 # ================================
 st.markdown("""
-<div class="footer">
-    MindBloom 🌸 A safe space to feel.<br>
-    Not a replacement for therapy — just a kind companion.
-</div>
-""", unsafe_allow_html=True)
+---
+MindBloom 🌸 A safe space to feel.  
+Not a replacement for therapy — just a kind companion.
+""")
