@@ -52,6 +52,8 @@ if "mood_logs" not in st.session_state:
 if "mood_history" not in st.session_state:
     st.session_state.mood_history = []
 
+
+
 # ================================
 # 🔍 Mood Detection Function
 # ================================
@@ -129,7 +131,7 @@ st.sidebar.markdown("🌼 Breathe. Share. Be held.")
 # ================================
 def speak_with_elevenlabs(text, api_key):
     try:
-        VOICE_ID = "2SKmF2TPfyD91YFCvZaX"  # Your voice ID
+        VOICE_ID = "Fd20ovrtdRUSfknSexl2"  # Your voice ID
         url = f"https://api.elevenlabs.io/v1/text-to-speech/{VOICE_ID}"
         headers = {"xi-api-key": api_key}
         data = {
