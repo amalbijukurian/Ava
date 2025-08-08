@@ -1,3 +1,4 @@
+# [Previous imports remain the same]
 import streamlit as st
 import requests
 import pandas as pd
@@ -12,6 +13,7 @@ import tempfile
 # ================================
 # 🔧 Start Ollama Server (if not running)
 # ================================
+# [This function remains the same]
 def start_ollama():
     if not st.session_state.get("ollama_started"):
         with st.spinner("🔁 Starting Ollama server... This may take a moment."):
@@ -45,18 +47,22 @@ Whatever you're feeling, it's okay. You're safe here.
 # ================================
 # 🧠 Initialize Session State
 # ================================
+# Ensure all session state variables are initialized at the very start
 if "chat" not in st.session_state:
     st.session_state.chat = []
 if "mood_logs" not in st.session_state:
     st.session_state.mood_logs = []
 if "mood_history" not in st.session_state:
     st.session_state.mood_history = []
-
-
+# --- CRITICAL: Initialize is_speaking early and correctly ---
+if "is_speaking" not in st.session_state:
+    st.session_state.is_speaking = False
+# -----------------------------------------------------------
 
 # ================================
 # 🔍 Mood Detection Function
 # ================================
+# [This function remains the same]
 def detect_mood(text):
     text_lower = text.lower()
     mood_scores = {
@@ -78,6 +84,7 @@ def detect_mood(text):
 # ================================
 # 📁 Load Mood Logs from File (Persistence)
 # ================================
+# [This section remains the same]
 LOG_FILE = "data/mood_logs.json"
 if os.path.exists(LOG_FILE):
     try:
@@ -96,6 +103,7 @@ if os.path.exists(LOG_FILE):
 # ================================
 # 🌿 Sidebar: Mood Tracker
 # ================================
+# [This section remains the same]
 st.sidebar.header("🌿 How are you today?")
 st.sidebar.markdown("Pick a mood — no feeling is too small.")
 mood_options = ["😊 Happy", "😢 Sad", "😟 Anxious", "😠 Angry", "😐 Neutral", "😴 Tired", "🧘‍♀️ Calm"]
@@ -127,13 +135,16 @@ st.sidebar.markdown("💬 You're not alone.")
 st.sidebar.markdown("🌼 Breathe. Share. Be held.")
 
 # ================================
-# 🔊 ElevenLabs Text-to-Speech
+# 🔊 ElevenLabs Text-to-Speech (MODIFIED)
 # ================================
 def speak_with_elevenlabs(text, api_key):
     try:
-        VOICE_ID = "Fd20ovrtdRUSfknSexl2"  # Your voice ID
-        url = f"https://api.elevenlabs.io/v1/text-to-speech/{VOICE_ID}"
-        headers = {"xi-api-key": api_key}
+        # ElevenLabs API endpoint
+        url = f"https://api.elevenlabs.io/v1/text-to-speech/2SKmF2TPfyD91YFCvZaX"  # Use your Voice ID directly
+        headers = {
+            "xi-api-key": api_key,
+            "Content-Type": "application/json"
+        }
         data = {
             "text": text,
             "model_id": "eleven_multilingual_v2",
@@ -144,33 +155,65 @@ def speak_with_elevenlabs(text, api_key):
                 "use_speaker_boost": True
             }
         }
-
         response = requests.post(url, json=data, headers=headers)
         if response.status_code != 200:
             st.error(f"❌ ElevenLabs error: {response.status_code} - {response.text}")
+            # Reset state on error before returning
+            st.session_state.is_speaking = False
             return
 
+        # Save audio to a temporary file
         with tempfile.NamedTemporaryFile(delete=False, suffix='.mp3') as f:
             temp_path = f.name
         with open(temp_path, 'wb') as f:
             f.write(response.content)
 
+        # --- MODIFICATION STARTS HERE ---
+        # Play audio
         pygame.mixer.init()
         pygame.mixer.music.load(temp_path)
         pygame.mixer.music.play()
 
-        while pygame.mixer.music.get_busy():
+        # --- CRITICAL CHANGE 1: Set state BEFORE potential rerun ---
+        st.session_state.is_speaking = True
+        # --- CRITICAL CHANGE 2: Force UI update immediately ---
+        # This ensures the "Stop Speaking" button appears on the next render cycle.
+        st.rerun() # Use st.rerun() instead of st.experimental_rerun()
+
+        # Wait for playback to finish or be interrupted
+        # The loop now runs knowing the button should be visible.
+        while pygame.mixer.music.get_busy() and st.session_state.is_speaking:
             pygame.time.Clock().tick(10)
 
-        pygame.mixer.quit()
-        os.unlink(temp_path)
+        # Stop playback if interrupted (outside the loop)
+        if not st.session_state.is_speaking:
+            try:
+                pygame.mixer.music.stop()
+            except:
+                pass # Ignore errors if stop fails
+
+        # Clean up
+        try:
+            pygame.mixer.quit()
+        except:
+            pass # Ignore cleanup errors
+        try:
+            os.unlink(temp_path)
+        except:
+            pass # Ignore file deletion errors
+
+        # Reset speaking state after everything is done
+        st.session_state.is_speaking = False
 
     except Exception as e:
         st.error(f"🔊 Audio error: {str(e)}")
+        # Ensure state is reset on any unexpected error
+        st.session_state.is_speaking = False
 
 # ================================
 # 🔐 Load ElevenLabs API Key
 # ================================
+# [This section remains the same]
 try:
     ELEVENLABS_API_KEY = st.secrets["elevenlabs_api_key"]
 except:
@@ -183,14 +226,42 @@ enable_voice = st.sidebar.checkbox("🔊 Ava speaks back", value=True, key="enab
 # ================================
 # 💬 Chat History
 # ================================
+# [This section remains the same]
 for message in st.session_state.chat:
     if message["role"] in ["user", "assistant"]:
         with st.chat_message(message["role"]):
             st.write(message["content"])
 
+# ================================ 
+# ✅ Add Stop Speaking Button HERE, after chat history and before input
+# This is a good consistent location for it.
+# ================================ 
+if st.session_state.is_speaking:
+    # Use a full-width container for better visibility
+    with st.container():
+        st.markdown("---")
+        # Use 'type="primary"' to make the button stand out more (often red)
+        if st.button("⏹️ Stop Speaking", key="stop_speaking_main", type="primary"):
+            st.session_state.is_speaking = False
+            try:
+                # Attempt to stop pygame mixer immediately
+                pygame.mixer.music.stop()
+                # pygame.mixer.quit() # Optional cleanup, might cause issues if re-init needed quickly
+            except Exception:
+                pass # Ignore errors during stop attempt
+            st.success("🔇 Stopped.")
+            # --- CRITICAL CHANGE 3: Use st.rerun() ---
+            # Force UI update to immediately hide the button and reflect state change.
+            st.rerun() # Use st.rerun() instead of st.experimental_rerun()
+        st.markdown("---")
+# ================================ 
+# End of Stop Button Section
+# ================================ 
+
 # ================================
 # 🖊️ User Input & AI Response
 # ================================
+# [This section remains mostly the same, with minor adjustments]
 user_input = st.chat_input("Share what's on your mind...")
 
 if user_input:
@@ -254,15 +325,20 @@ if user_input:
     st.session_state.chat.append({"role": "assistant", "content": bot_msg})
     with st.chat_message("assistant"):
         st.write(bot_msg)
-
-        # Speak if enabled
+        # Speak if enabled and not already speaking
+        # --- Minor adjustment: Ensure state check is robust ---
         if enable_voice and ELEVENLABS_API_KEY:
-            with st.spinner("🔊 Ava is speaking..."):
-                speak_with_elevenlabs(bot_msg, ELEVENLABS_API_KEY)
+            # Double-check is_speaking state before starting
+            if not st.session_state.get('is_speaking', False): # Use .get for safety
+                 with st.spinner("🔊 Ava is speaking..."):
+                     speak_with_elevenlabs(bot_msg, ELEVENLABS_API_KEY)
+            else:
+                 st.warning("Ava is still speaking. Please stop her current speech to hear this message.")
 
 # ================================
 # 🌼 Footer
 # ================================
+# [This section remains the same]
 st.markdown("""
 ---
 MindBloom 🌸 A safe space to feel.  
