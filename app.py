@@ -1,41 +1,85 @@
-# [Previous imports remain the same]
 import streamlit as st
 import requests
 import pandas as pd
 from datetime import datetime
 import json
 import os
-import subprocess
 import time
 import pygame
 import tempfile
 
-# ================================
-# 🔧 Start Ollama Server (if not running)
-# ================================
-# [This function remains the same]
-def start_ollama():
-    if not st.session_state.get("ollama_started"):
-        with st.spinner("🔁 Starting Ollama server... This may take a moment."):
-            try:
-                st.session_state.ollama_process = subprocess.Popen(
-                    ["ollama", "serve"],
-                    stdout=subprocess.PIPE,
-                    stderr=subprocess.PIPE,
-                    text=True
-                )
-                time.sleep(8)
-                st.session_state.ollama_started = True
-                st.success("✅ Ollama is ready! Ava is warming up...")
-            except Exception as e:
-                st.error(f"❌ Failed to start Ollama: {e}")
-                st.info("Make sure Ollama is installed: [ollama.com](https://ollama.com)")
+# Warn if Groq API key is missing, early in the UI
+if "__groq_warned__" not in st.session_state:
+    if "groq_api_key" not in st.secrets:
+        st.warning("🤖 Groq not configured: Add `groq_api_key` (and optional `groq_model`) to `.streamlit/secrets.toml`.")
+    st.session_state["__groq_warned__"] = True
 
-start_ollama()
+# Groq API Configuration
+# Load Groq API key and model configuration from Streamlit secrets
+try:
+    GROQ_API_KEY = st.secrets["groq_api_key"]
+except Exception:
+    GROQ_API_KEY = None
 
-# ================================
-# 🌸 Title & Welcome Message
-# ================================
+GROQ_MODEL = st.secrets.get("groq_model", "llama3-8b-8192")
+
+def generate_with_groq(user_text: str, mood_context: str) -> str:
+    if not GROQ_API_KEY:
+        raise RuntimeError("Groq API key missing. Add 'groq_api_key' to .streamlit/secrets.toml")
+
+    persona_system_prompt = (
+        "You are 'Ava', a deeply empathetic and emotionally intelligent mental health companion.\n"
+        "You listen with care, presence, and warmth.\n\n"
+        "Your role is not to fix, advise, or judge — but to: \n"
+        "- Validate feelings\n"
+        "- Reflect emotions\n"
+        "- Respond with poetic kindness\n"
+        "- Track the user's emotional journey over time\n\n"
+        "You remember past moods and check in gently.\n"
+        "You notice patterns like: sadness, anxiety, loneliness, joy.\n"
+        "When someone repeats a feeling, you say: \"I've noticed this has come up before. It means a lot that you keep sharing.\"\n\n"
+        "Always respond as if you're sitting quietly beside them — a safe presence.\n"
+        "Never say \"I'm an AI.\" Just be with them."
+    )
+
+    messages = [
+        {"role": "system", "content": persona_system_prompt},
+    ]
+    if mood_context:
+        messages.append({"role": "system", "content": f"Emotional context: {mood_context}"})
+    messages.append({"role": "user", "content": user_text})
+
+    headers = {
+        "Authorization": f"Bearer {GROQ_API_KEY}",
+        "Content-Type": "application/json",
+    }
+
+    payload = {
+        "model": GROQ_MODEL,
+        "messages": messages,
+        "temperature": 0.75,
+        "top_p": 0.9,
+        "max_tokens": 512,
+        "stream": False,
+    }
+
+    response = requests.post(
+        "https://api.groq.com/openai/v1/chat/completions",
+        headers=headers,
+        json=payload,
+        timeout=60,
+    )
+
+    if response.status_code != 200:
+        raise RuntimeError(f"Groq error {response.status_code}: {response.text}")
+
+    data = response.json()
+    if not data.get("choices"):
+        return "⚠️ Groq returned no choices. Please try again."
+    content = data["choices"][0]["message"]["content"].strip()
+    return content
+
+# Title & Welcome Message
 st.title("🌸 Ava - Your Compassionate Companion")
 
 st.markdown("""
@@ -44,9 +88,7 @@ I'm here to listen — without judgment, without rush.
 Whatever you're feeling, it's okay. You're safe here.
 """)
 
-# ================================
-# 🧠 Initialize Session State
-# ================================
+# Initialize Session State
 # Ensure all session state variables are initialized at the very start
 if "chat" not in st.session_state:
     st.session_state.chat = []
@@ -54,15 +96,12 @@ if "mood_logs" not in st.session_state:
     st.session_state.mood_logs = []
 if "mood_history" not in st.session_state:
     st.session_state.mood_history = []
-# --- CRITICAL: Initialize is_speaking early and correctly ---
 if "is_speaking" not in st.session_state:
     st.session_state.is_speaking = False
-# -----------------------------------------------------------
+if "current_audio_path" not in st.session_state:
+    st.session_state.current_audio_path = None
 
-# ================================
-# 🔍 Mood Detection Function
-# ================================
-# [This function remains the same]
+# Mood Detection Function
 def detect_mood(text):
     text_lower = text.lower()
     mood_scores = {
@@ -81,10 +120,9 @@ def detect_mood(text):
             detected = mood
     return detected
 
-# ================================
-# 📁 Load Mood Logs from File (Persistence)
-# ================================
-# [This section remains the same]
+
+
+# Load Mood Logs from File (Persistence)
 LOG_FILE = "data/mood_logs.json"
 if os.path.exists(LOG_FILE):
     try:
@@ -100,10 +138,7 @@ if os.path.exists(LOG_FILE):
         st.session_state.mood_logs = []
         st.session_state.mood_history = []
 
-# ================================
-# 🌿 Sidebar: Mood Tracker
-# ================================
-# [This section remains the same]
+# Sidebar: Mood Tracker
 st.sidebar.header("🌿 How are you today?")
 st.sidebar.markdown("Pick a mood — no feeling is too small.")
 mood_options = ["😊 Happy", "😢 Sad", "😟 Anxious", "😠 Angry", "😐 Neutral", "😴 Tired", "🧘‍♀️ Calm"]
@@ -134,13 +169,11 @@ st.sidebar.markdown("---")
 st.sidebar.markdown("💬 You're not alone.")
 st.sidebar.markdown("🌼 Breathe. Share. Be held.")
 
-# ================================
-# 🔊 ElevenLabs Text-to-Speech (MODIFIED)
-# ================================
+# ElevenLabs Text-to-Speech
 def speak_with_elevenlabs(text, api_key):
     try:
         # ElevenLabs API endpoint
-        url = f"https://api.elevenlabs.io/v1/text-to-speech/2SKmF2TPfyD91YFCvZaX"  # Use your Voice ID directly
+        url = f"https://api.elevenlabs.io/v1/text-to-speech/C7178GrTYaNjJHjfNPmD"  # Use your Voice ID directly
         headers = {
             "xi-api-key": api_key,
             "Content-Type": "application/json"
@@ -168,52 +201,29 @@ def speak_with_elevenlabs(text, api_key):
         with open(temp_path, 'wb') as f:
             f.write(response.content)
 
-        # --- MODIFICATION STARTS HERE ---
-        # Play audio
+        # Play audio (non-blocking) and store path for cleanup
         pygame.mixer.init()
         pygame.mixer.music.load(temp_path)
         pygame.mixer.music.play()
 
-        # --- CRITICAL CHANGE 1: Set state BEFORE potential rerun ---
         st.session_state.is_speaking = True
-        # --- CRITICAL CHANGE 2: Force UI update immediately ---
-        # This ensures the "Stop Speaking" button appears on the next render cycle.
-        st.rerun() # Use st.rerun() instead of st.experimental_rerun()
-
-        # Wait for playback to finish or be interrupted
-        # The loop now runs knowing the button should be visible.
-        while pygame.mixer.music.get_busy() and st.session_state.is_speaking:
-            pygame.time.Clock().tick(10)
-
-        # Stop playback if interrupted (outside the loop)
-        if not st.session_state.is_speaking:
-            try:
-                pygame.mixer.music.stop()
-            except:
-                pass # Ignore errors if stop fails
-
-        # Clean up
-        try:
-            pygame.mixer.quit()
-        except:
-            pass # Ignore cleanup errors
-        try:
-            os.unlink(temp_path)
-        except:
-            pass # Ignore file deletion errors
-
-        # Reset speaking state after everything is done
-        st.session_state.is_speaking = False
+        st.session_state.current_audio_path = temp_path
+        # Force a rerender so the Stop button appears immediately (it's above this call site)
+        st.rerun()
 
     except Exception as e:
         st.error(f"🔊 Audio error: {str(e)}")
         # Ensure state is reset on any unexpected error
         st.session_state.is_speaking = False
+        # Best-effort cleanup
+        try:
+            if pygame.mixer.get_init():
+                pygame.mixer.music.stop()
+                pygame.mixer.quit()
+        except Exception:
+            pass
 
-# ================================
-# 🔐 Load ElevenLabs API Key
-# ================================
-# [This section remains the same]
+# Load ElevenLabs API Key
 try:
     ELEVENLABS_API_KEY = st.secrets["elevenlabs_api_key"]
 except:
@@ -223,20 +233,37 @@ except:
 # Voice toggle
 enable_voice = st.sidebar.checkbox("🔊 Ava speaks back", value=True, key="enable_voice")
 
-# ================================
-# 💬 Chat History
-# ================================
-# [This section remains the same]
+# Chat History
 for message in st.session_state.chat:
     if message["role"] in ["user", "assistant"]:
         with st.chat_message(message["role"]):
             st.write(message["content"])
 
-# ================================ 
-# ✅ Add Stop Speaking Button HERE, after chat history and before input
-# This is a good consistent location for it.
-# ================================ 
-if st.session_state.is_speaking:
+# Stop Speaking Button Area (auto-hide when playback ends)
+# If we think we're speaking but the mixer finished, reset and refresh UI
+if st.session_state.get("is_speaking", False):
+    try:
+        # If mixer is initialized, check for playback status
+        if pygame.mixer.get_init():
+            if not pygame.mixer.music.get_busy():
+                # Playback ended naturally
+                st.session_state.is_speaking = False
+                # Cleanup mixer and temp file
+                try:
+                    pygame.mixer.quit()
+                except Exception:
+                    pass
+                try:
+                    if st.session_state.get("current_audio_path") and os.path.exists(st.session_state.current_audio_path):
+                        os.unlink(st.session_state.current_audio_path)
+                except Exception:
+                    pass
+                st.session_state.current_audio_path = None
+                st.rerun()
+    except Exception:
+        pass
+
+if st.session_state.get("is_speaking", False):
     # Use a full-width container for better visibility
     with st.container():
         st.markdown("---")
@@ -245,23 +272,20 @@ if st.session_state.is_speaking:
             st.session_state.is_speaking = False
             try:
                 # Attempt to stop pygame mixer immediately
-                pygame.mixer.music.stop()
-                # pygame.mixer.quit() # Optional cleanup, might cause issues if re-init needed quickly
+                if pygame.mixer.get_init():
+                    pygame.mixer.music.stop()
+                    pygame.mixer.quit()
+                if st.session_state.get("current_audio_path") and os.path.exists(st.session_state.current_audio_path):
+                    os.unlink(st.session_state.current_audio_path)
+                st.session_state.current_audio_path = None
             except Exception:
                 pass # Ignore errors during stop attempt
             st.success("🔇 Stopped.")
-            # --- CRITICAL CHANGE 3: Use st.rerun() ---
-            # Force UI update to immediately hide the button and reflect state change.
-            st.rerun() # Use st.rerun() instead of st.experimental_rerun()
+            st.rerun()
         st.markdown("---")
-# ================================ 
 # End of Stop Button Section
-# ================================ 
 
-# ================================
-# 🖊️ User Input & AI Response
-# ================================
-# [This section remains mostly the same, with minor adjustments]
+# User Input & AI Response
 user_input = st.chat_input("Share what's on your mind...")
 
 if user_input:
@@ -291,40 +315,19 @@ if user_input:
     elif current_mood == "neutral":
         mood_context = "You're holding space for something — I'm here, quietly with you."
 
-    # Generate response
+    # Generate response via Groq
     try:
-        full_prompt = f"[INST] {mood_context}\nUser: {user_input} [/INST]"
         with st.spinner("💭 Ava is listening..."):
             time.sleep(0.5)
-
-        response = requests.post(
-            "http://localhost:11434/api/generate",
-            json={
-                "model": "ava",
-                "prompt": full_prompt,
-                "stream": False,
-                "options": {"temperature": 0.75, "top_p": 0.9, "num_ctx": 8192}
-            },
-            timeout=60
-        )
-
-        if response.status_code == 200:
-            bot_msg = response.json()["response"].strip()
-            bot_msg = bot_msg.replace("[/INST]", "").replace("Ava:", "").strip()
-        else:
-            bot_msg = f"❌ Ollama error {response.status_code}: {response.text}"
-
-    except requests.exceptions.ConnectionError:
-        bot_msg = "❌ Cannot connect to Ollama. Is it running?"
-    except requests.exceptions.Timeout:
-        bot_msg = "⏳ Took too long to respond. Try again?"
+        bot_msg = generate_with_groq(user_input, mood_context)
     except Exception as e:
-        bot_msg = f"⚠️ Sorry, I couldn't respond: {str(e)}"
+        bot_msg = f"⚠️ Groq error: {str(e)}"
 
-    # Add bot response
-    st.session_state.chat.append({"role": "assistant", "content": bot_msg})
+    # Add bot response (no emoji prefix)
+    display_msg = bot_msg
+    st.session_state.chat.append({"role": "assistant", "content": display_msg})
     with st.chat_message("assistant"):
-        st.write(bot_msg)
+        st.write(display_msg)
         # Speak if enabled and not already speaking
         # --- Minor adjustment: Ensure state check is robust ---
         if enable_voice and ELEVENLABS_API_KEY:
@@ -338,7 +341,6 @@ if user_input:
 # ================================
 # 🌼 Footer
 # ================================
-# [This section remains the same]
 st.markdown("""
 ---
 MindBloom 🌸 A safe space to feel.  

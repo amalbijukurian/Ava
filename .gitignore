@@ -1,0 +1,19 @@
+# Python
+__pycache__/
+*.py[cod]
+.venv/
+venv/
+.env
+
+# Editors/OS
+.DS_Store
+Thumbs.db
+.idea/
+.vscode/
+
+# Streamlit
+.streamlit/secrets.toml
+
+# App data
+data/*.json
+
